@@ -482,6 +482,7 @@ typedef struct spv_diagnostic_t {
   spv_position_t position;
   char* error;
   bool isTextSource;
+  struct spv_diagnostic_t* next;
 } spv_diagnostic_t;
 
 // Opaque struct containing the context used to operate on a SPIR-V module.

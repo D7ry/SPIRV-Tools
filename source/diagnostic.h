@@ -74,6 +74,15 @@ void UseDiagnosticAsMessageConsumer(spv_context context,
 
 std::string spvResultToString(spv_result_t res);
 
+// Flushes the diagnostics to the given stream.
+// Assumes that |diagnostic| is a valid pointer.
+void FlushDiagnosticsToStream(spv_diagnostic diagnostic,
+                              std::ostream& out);
+
+// Flushes the diagnostics to the given consumer.
+void FlushDiagnosticsToConsumer(spv_diagnostic diagnostic,
+                                const MessageConsumer& consumer);
+
 }  // namespace spvtools
 
 #endif  // SOURCE_DIAGNOSTIC_H_

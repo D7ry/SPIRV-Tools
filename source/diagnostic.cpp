@@ -36,35 +36,25 @@ spv_diagnostic spvDiagnosticCreate(const spv_position position,
   }
   diagnostic->position = *position;
   diagnostic->isTextSource = false;
+  diagnostic->next = nullptr;
   memset(diagnostic->error, 0, length);
   strcpy(diagnostic->error, message);
   return diagnostic;
 }
 
 void spvDiagnosticDestroy(spv_diagnostic diagnostic) {
-  if (!diagnostic) return;
-  delete[] diagnostic->error;
-  delete diagnostic;
+  while (diagnostic) {
+    spv_diagnostic next = diagnostic->next;
+    delete[] diagnostic->error;
+    delete diagnostic;
+    diagnostic = next;
+  }
 }
 
 spv_result_t spvDiagnosticPrint(const spv_diagnostic diagnostic) {
   if (!diagnostic) return SPV_ERROR_INVALID_DIAGNOSTIC;
 
-  if (diagnostic->isTextSource) {
-    // NOTE: This is a text position
-    // NOTE: add 1 to the line as editors start at line 1, we are counting new
-    // line characters to start at line 0
-    std::cerr << "error: " << diagnostic->position.line + 1 << ": "
-              << diagnostic->position.column + 1 << ": " << diagnostic->error
-              << "\n";
-    return SPV_SUCCESS;
-  }
-
-  // NOTE: Assume this is a binary position
-  std::cerr << "error: ";
-  if (diagnostic->position.index > 0)
-    std::cerr << diagnostic->position.index << ": ";
-  std::cerr << diagnostic->error << "\n";
+  spvtools::FlushDiagnosticsToStream(diagnostic, std::cerr);
   return SPV_SUCCESS;
 }
 
@@ -188,6 +178,36 @@ std::string spvResultToString(spv_result_t res) {
       out = "Unknown Error";
   }
   return out;
+}
+
+void FlushDiagnosticsToStream(spv_diagnostic diagnostic, std::ostream& out) {
+  assert(diagnostic != nullptr);
+  while (diagnostic) {
+    if (diagnostic->isTextSource) {
+      // NOTE: This is a text position
+      // NOTE: add 1 to the line as editors start at line 1, we are counting new
+      // line characters to start at line 0
+      out << "error: " << diagnostic->position.line + 1 << ": "
+          << diagnostic->position.column + 1 << ": " << diagnostic->error
+          << "\n";
+    }
+
+    // NOTE: Assume this is a binary position
+    out << "error: ";
+    if (diagnostic->position.index > 0)
+      out << diagnostic->position.index << ": ";
+    out << diagnostic->error << "\n";
+
+    diagnostic = diagnostic->next;
+  }
+}
+
+void FlushDiagnosticsToConsumer(spv_diagnostic diagnostic,
+                                const MessageConsumer& consumer) {
+  while (diagnostic) {
+    consumer(SPV_MSG_ERROR, nullptr, diagnostic->position, diagnostic->error);
+    diagnostic = diagnostic->next;
+  }
 }
 
 }  // namespace spvtools
