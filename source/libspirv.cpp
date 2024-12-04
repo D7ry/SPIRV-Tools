@@ -20,6 +20,7 @@
 #include <utility>
 #include <vector>
 
+#include "source/diagnostic.h"
 #include "source/table.h"
 
 namespace spvtools {
@@ -159,8 +160,7 @@ bool SpirvTools::Validate(const uint32_t* binary, const size_t binary_size,
   bool valid = spvValidateWithOptions(impl_->context, options, &the_binary,
                                       &diagnostic) == SPV_SUCCESS;
   if (!valid && impl_->context->consumer) {
-    impl_->context->consumer.operator()(
-        SPV_MSG_ERROR, nullptr, diagnostic->position, diagnostic->error);
+    FlushDiagnosticsToConsumer(diagnostic, impl_->context->consumer);
   }
   spvDiagnosticDestroy(diagnostic);
   return valid;
