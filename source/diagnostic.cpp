@@ -24,8 +24,9 @@
 
 // Diagnostic API
 
-spv_diagnostic spvDiagnosticCreate(const spv_position position,
-                                   const char* message) {
+// Creates a single diagnostic message. Returns nullptr if out of memory.
+static spv_diagnostic createDiagnosticElem(const spv_position position,
+                                    const char* message) {
   spv_diagnostic diagnostic = new spv_diagnostic_t;
   if (!diagnostic) return nullptr;
   size_t length = strlen(message) + 1;
@@ -42,6 +43,11 @@ spv_diagnostic spvDiagnosticCreate(const spv_position position,
   return diagnostic;
 }
 
+spv_diagnostic spvDiagnosticCreate(const spv_position position,
+                                   const char* message) {
+  return createDiagnosticElem(position, message);
+}
+
 void spvDiagnosticDestroy(spv_diagnostic diagnostic) {
   while (diagnostic) {
     spv_diagnostic next = diagnostic->next;
@@ -49,6 +55,15 @@ void spvDiagnosticDestroy(spv_diagnostic diagnostic) {
     delete diagnostic;
     diagnostic = next;
   }
+}
+
+void spvDiagnosticAppend(spv_diagnostic diagnostic, const spv_position position,
+                         const char* message) {
+  assert(diagnostic != nullptr);
+  while (diagnostic->next) { // TODO: save pointer to the last element?
+    diagnostic = diagnostic->next;
+  }
+  diagnostic->next = createDiagnosticElem(position, message);
 }
 
 spv_result_t spvDiagnosticPrint(const spv_diagnostic diagnostic) {
@@ -108,11 +123,14 @@ void UseDiagnosticAsMessageConsumer(spv_context context,
   assert(diagnostic && *diagnostic == nullptr);
 
   auto create_diagnostic = [diagnostic](spv_message_level_t, const char*,
-                                        const spv_position_t& position,
-                                        const char* message) {
+                                     const spv_position_t& position,
+                                     const char* message) {
     auto p = position;
-    spvDiagnosticDestroy(*diagnostic);  // Avoid memory leak.
-    *diagnostic = spvDiagnosticCreate(&p, message);
+    if (!*diagnostic) {
+      *diagnostic = spvDiagnosticCreate(&p, message);
+    } else {
+      spvDiagnosticAppend(*diagnostic, &p, message);
+    }
   };
   SetContextMessageConsumer(context, std::move(create_diagnostic));
 }

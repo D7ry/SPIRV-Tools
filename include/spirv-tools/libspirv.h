@@ -916,6 +916,11 @@ spvDiagnosticCreate(const spv_position position, const char* message);
 // pointer.
 SPIRV_TOOLS_EXPORT void spvDiagnosticDestroy(spv_diagnostic diagnostic);
 
+// Appends a new diagnostic message to the given diagnostic object.
+SPIRV_TOOLS_EXPORT void spvDiagnosticAppend(spv_diagnostic diagnostic,
+                                            const spv_position position,
+                                            const char* message);
+
 // Prints the diagnostic to stderr.
 SPIRV_TOOLS_EXPORT spv_result_t
 spvDiagnosticPrint(const spv_diagnostic diagnostic);
