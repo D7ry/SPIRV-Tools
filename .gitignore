@@ -1,5 +1,6 @@
 .clang_complete
 .ycm_extra_conf.py*
+.cache
 *.pyc
 compile_commands.json
 /build*/
