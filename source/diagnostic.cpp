@@ -201,20 +201,20 @@ std::string spvResultToString(spv_result_t res) {
 void FlushDiagnosticsToStream(spv_diagnostic diagnostic, std::ostream& out) {
   assert(diagnostic != nullptr);
   while (diagnostic) {
+    // TODO: why are we using this instead of `CLIMessageConsumer`?
     if (diagnostic->isTextSource) {
       // NOTE: This is a text position
       // NOTE: add 1 to the line as editors start at line 1, we are counting new
       // line characters to start at line 0
-      out << "error: " << diagnostic->position.line + 1 << ": "
-          << diagnostic->position.column + 1 << ": " << diagnostic->error
-          << "\n";
+      out << "error: line " << diagnostic->position.line + 1 << ": "
+          << diagnostic->error << "\n";
+    } else {
+      // NOTE: Assume this is a binary position
+      out << "error: line ";
+      if (diagnostic->position.index > 0)
+        out << diagnostic->position.index << ": ";
+      out << diagnostic->error << "\n";
     }
-
-    // NOTE: Assume this is a binary position
-    out << "error: ";
-    if (diagnostic->position.index > 0)
-      out << diagnostic->position.index << ": ";
-    out << diagnostic->error << "\n";
 
     diagnostic = diagnostic->next;
   }
