@@ -211,6 +211,7 @@ spv_result_t ValidateBinaryUsingContextAndValidationState(
   bool has_mask_task_nv = false;
   bool has_mask_task_ext = false;
   std::vector<Instruction*> visited_entry_points;
+  bool all_validation_success = true;
   for (auto& instruction : vstate->ordered_instructions()) {
     {
       // In order to do this work outside of Process Instruction we need to be
@@ -241,9 +242,10 @@ spv_result_t ValidateBinaryUsingContextAndValidationState(
 
             if (desc_name == check_name &&
                 execution_model == check_execution_model) {
-              return vstate->diag(SPV_ERROR_INVALID_DATA, inst)
+              [[maybe_unused]] spv_result_t res = vstate->diag(SPV_ERROR_INVALID_DATA, inst)
                      << "2 Entry points cannot share the same name and "
                         "ExecutionMode.";
+              all_validation_success = false;
             }
           }
         }
@@ -256,8 +258,9 @@ spv_result_t ValidateBinaryUsingContextAndValidationState(
       }
       if (inst->opcode() == spv::Op::OpFunctionCall) {
         if (!vstate->in_function_body()) {
-          return vstate->diag(SPV_ERROR_INVALID_LAYOUT, &instruction)
+          [[maybe_unused]] spv_result_t res = vstate->diag(SPV_ERROR_INVALID_LAYOUT, &instruction)
                  << "A FunctionCall must happen within a function body.";
+          all_validation_success = false;
         }
 
         const auto called_id = inst->GetOperandAs<uint32_t>(2);
@@ -272,14 +275,13 @@ spv_result_t ValidateBinaryUsingContextAndValidationState(
           vstate->current_function().current_block()->set_terminator(inst);
         }
       }
-
-      if (auto error = IdPass(*vstate, inst)) return error;
+      if (IdPass(*vstate, inst)) all_validation_success = false;
     }
 
-    if (auto error = CapabilityPass(*vstate, &instruction)) return error;
-    if (auto error = ModuleLayoutPass(*vstate, &instruction)) return error;
-    if (auto error = CfgPass(*vstate, &instruction)) return error;
-    if (auto error = InstructionPass(*vstate, &instruction)) return error;
+    if (CapabilityPass(*vstate, &instruction)) all_validation_success = false;
+    if (ModuleLayoutPass(*vstate, &instruction)) all_validation_success = false;
+    if (CfgPass(*vstate, &instruction)) all_validation_success = false;
+    if (InstructionPass(*vstate, &instruction)) all_validation_success = false;
 
     // Now that all of the checks are done, update the state.
     {
@@ -291,27 +293,35 @@ spv_result_t ValidateBinaryUsingContextAndValidationState(
     }
   }
 
-  if (!vstate->has_memory_model_specified())
-    return vstate->diag(SPV_ERROR_INVALID_LAYOUT, nullptr)
-           << "Missing required OpMemoryModel instruction.";
+  if (!vstate->has_memory_model_specified()) {
+    vstate->diag(SPV_ERROR_INVALID_LAYOUT, nullptr)
+        << "Missing required OpMemoryModel instruction.";
+    all_validation_success = false;
+  }
 
-  if (vstate->in_function_body())
-    return vstate->diag(SPV_ERROR_INVALID_LAYOUT, nullptr)
-           << "Missing OpFunctionEnd at end of module.";
+  if (vstate->in_function_body()) {
+    vstate->diag(SPV_ERROR_INVALID_LAYOUT, nullptr)
+        << "Missing OpFunctionEnd at end of module.";
+    all_validation_success = false;
+  }
 
   if (vstate->HasCapability(spv::Capability::BindlessTextureNV) &&
-      !vstate->has_samplerimage_variable_address_mode_specified())
-    return vstate->diag(SPV_ERROR_INVALID_LAYOUT, nullptr)
-           << "Missing required OpSamplerImageAddressingModeNV instruction.";
+      !vstate->has_samplerimage_variable_address_mode_specified()) {
+    vstate->diag(SPV_ERROR_INVALID_LAYOUT, nullptr)
+       << "Missing required OpSamplerImageAddressingModeNV instruction.";
+    all_validation_success = false;
+  }
 
-  if (has_mask_task_ext && has_mask_task_nv)
-    return vstate->diag(SPV_ERROR_INVALID_LAYOUT, nullptr)
-           << vstate->VkErrorID(7102)
-           << "Module can't mix MeshEXT/TaskEXT with MeshNV/TaskNV Execution "
-              "Model.";
+  if (has_mask_task_ext && has_mask_task_nv) {
+    vstate->diag(SPV_ERROR_INVALID_LAYOUT, nullptr)
+        << vstate->VkErrorID(7102)
+        << "Module can't mix MeshEXT/TaskEXT with MeshNV/TaskNV Execution "
+           "Model.";
+    all_validation_success = false;
+  }
 
   // Catch undefined forward references before performing further checks.
-  if (auto error = ValidateForwardDecls(*vstate)) return error;
+  if (ValidateForwardDecls(*vstate)) all_validation_success = false;
 
   // Calculate reachability after all the blocks are parsed, but early that it
   // can be relied on in subsequent pases.
@@ -327,7 +337,9 @@ spv_result_t ValidateBinaryUsingContextAndValidationState(
   // messages.
   for (size_t i = 0; i < vstate->ordered_instructions().size(); ++i) {
     auto& instruction = vstate->ordered_instructions()[i];
-    if (auto error = UpdateIdUse(*vstate, &instruction)) return error;
+    if (UpdateIdUse(*vstate, &instruction) != SPV_SUCCESS) {
+      all_validation_success = false;
+    }
   }
 
   // Validate individual opcodes.
@@ -336,62 +348,64 @@ spv_result_t ValidateBinaryUsingContextAndValidationState(
 
     // Keep these passes in the order they appear in the SPIR-V specification
     // sections to maintain test consistency.
-    if (auto error = MiscPass(*vstate, &instruction)) return error;
-    if (auto error = DebugPass(*vstate, &instruction)) return error;
-    if (auto error = AnnotationPass(*vstate, &instruction)) return error;
-    if (auto error = ExtensionPass(*vstate, &instruction)) return error;
-    if (auto error = ModeSettingPass(*vstate, &instruction)) return error;
-    if (auto error = TypePass(*vstate, &instruction)) return error;
-    if (auto error = ConstantPass(*vstate, &instruction)) return error;
-    if (auto error = MemoryPass(*vstate, &instruction)) return error;
-    if (auto error = FunctionPass(*vstate, &instruction)) return error;
-    if (auto error = ImagePass(*vstate, &instruction)) return error;
-    if (auto error = ConversionPass(*vstate, &instruction)) return error;
-    if (auto error = CompositesPass(*vstate, &instruction)) return error;
-    if (auto error = ArithmeticsPass(*vstate, &instruction)) return error;
-    if (auto error = BitwisePass(*vstate, &instruction)) return error;
-    if (auto error = LogicalsPass(*vstate, &instruction)) return error;
-    if (auto error = ControlFlowPass(*vstate, &instruction)) return error;
-    if (auto error = DerivativesPass(*vstate, &instruction)) return error;
-    if (auto error = AtomicsPass(*vstate, &instruction)) return error;
-    if (auto error = PrimitivesPass(*vstate, &instruction)) return error;
-    if (auto error = BarriersPass(*vstate, &instruction)) return error;
+    if (MiscPass(*vstate, &instruction)) all_validation_success = false;
+    if (DebugPass(*vstate, &instruction)) all_validation_success = false;
+    if (AnnotationPass(*vstate, &instruction)) all_validation_success = false;
+    if (ExtensionPass(*vstate, &instruction)) all_validation_success = false;
+    if (ModeSettingPass(*vstate, &instruction)) all_validation_success = false;
+    if (TypePass(*vstate, &instruction)) all_validation_success = false;
+    if (ConstantPass(*vstate, &instruction)) all_validation_success = false;
+    if (MemoryPass(*vstate, &instruction)) all_validation_success = false;
+    if (FunctionPass(*vstate, &instruction)) all_validation_success = false;
+    if (ImagePass(*vstate, &instruction)) all_validation_success = false;
+    if (ConversionPass(*vstate, &instruction)) all_validation_success = false;
+    if (CompositesPass(*vstate, &instruction)) all_validation_success = false;
+    if (ArithmeticsPass(*vstate, &instruction)) all_validation_success = false;
+    if (BitwisePass(*vstate, &instruction)) all_validation_success = false;
+    if (LogicalsPass(*vstate, &instruction)) all_validation_success = false;
+    if (ControlFlowPass(*vstate, &instruction)) all_validation_success = false;
+    if (DerivativesPass(*vstate, &instruction)) all_validation_success = false;
+    if (AtomicsPass(*vstate, &instruction)) all_validation_success = false;
+    if (PrimitivesPass(*vstate, &instruction)) all_validation_success = false;
+    if (BarriersPass(*vstate, &instruction)) all_validation_success = false;
     // Group
     // Device-Side Enqueue
     // Pipe
-    if (auto error = NonUniformPass(*vstate, &instruction)) return error;
+    if (NonUniformPass(*vstate, &instruction)) all_validation_success = false;
 
-    if (auto error = LiteralsPass(*vstate, &instruction)) return error;
-    if (auto error = RayQueryPass(*vstate, &instruction)) return error;
-    if (auto error = RayTracingPass(*vstate, &instruction)) return error;
-    if (auto error = RayReorderNVPass(*vstate, &instruction)) return error;
-    if (auto error = MeshShadingPass(*vstate, &instruction)) return error;
-    if (auto error = TensorLayoutPass(*vstate, &instruction)) return error;
+    if (LiteralsPass(*vstate, &instruction)) all_validation_success = false;
+    if (RayQueryPass(*vstate, &instruction)) all_validation_success = false;
+    if (RayTracingPass(*vstate, &instruction)) all_validation_success = false;
+    if (RayReorderNVPass(*vstate, &instruction)) all_validation_success = false;
+    if (MeshShadingPass(*vstate, &instruction)) all_validation_success = false;
+    if (TensorLayoutPass(*vstate, &instruction)) all_validation_success = false;
   }
 
   // Validate the preconditions involving adjacent instructions. e.g.
   // spv::Op::OpPhi must only be preceded by spv::Op::OpLabel, spv::Op::OpPhi,
   // or spv::Op::OpLine.
-  if (auto error = ValidateAdjacency(*vstate)) return error;
+  if (ValidateAdjacency(*vstate)) all_validation_success = false;
 
-  if (auto error = ValidateEntryPoints(*vstate)) return error;
+  if (ValidateEntryPoints(*vstate)) all_validation_success = false;
   // CFG checks are performed after the binary has been parsed
   // and the CFGPass has collected information about the control flow
-  if (auto error = PerformCfgChecks(*vstate)) return error;
-  if (auto error = CheckIdDefinitionDominateUse(*vstate)) return error;
-  if (auto error = ValidateDecorations(*vstate)) return error;
-  if (auto error = ValidateInterfaces(*vstate)) return error;
+  if (PerformCfgChecks(*vstate)) all_validation_success = false;
+  if (CheckIdDefinitionDominateUse(*vstate)) all_validation_success = false;
+  if (ValidateDecorations(*vstate)) all_validation_success = false;
+  if (ValidateInterfaces(*vstate)) all_validation_success = false;
   // TODO(dsinclair): Restructure ValidateBuiltins so we can move into the
   // for() above as it loops over all ordered_instructions internally.
-  if (auto error = ValidateBuiltIns(*vstate)) return error;
+  if (ValidateBuiltIns(*vstate)) all_validation_success = false;
   // These checks must be performed after individual opcode checks because
   // those checks register the limitation checked here.
   for (const auto& inst : vstate->ordered_instructions()) {
-    if (auto error = ValidateExecutionLimitations(*vstate, &inst)) return error;
-    if (auto error = ValidateSmallTypeUses(*vstate, &inst)) return error;
-    if (auto error = ValidateQCOMImageProcessingTextureUsages(*vstate, &inst))
-      return error;
+    if (ValidateExecutionLimitations(*vstate, &inst)) all_validation_success = false;
+    if (ValidateSmallTypeUses(*vstate, &inst)) all_validation_success = false;
+    if (ValidateQCOMImageProcessingTextureUsages(*vstate, &inst))
+      all_validation_success = false;
   }
+
+  if (!all_validation_success) return SPV_FAILED_VALIDATION;
 
   return SPV_SUCCESS;
 }
